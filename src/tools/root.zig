@@ -87,6 +87,10 @@ pub const spi = @import("spi.zig");
 pub const path_security = @import("path_security.zig");
 pub const process_util = @import("process_util.zig");
 pub const message_history = @import("message_history.zig");
+pub const setup_slack = @import("setup_slack.zig");
+pub const setup_twitter = @import("setup_twitter.zig");
+pub const test_delivery = @import("test_delivery.zig");
+pub const restart_service = @import("restart_service.zig");
 
 // ── Core types ──────────────────────────────────────────────────────
 
@@ -350,6 +354,23 @@ pub fn allTools(
     const mht = try allocator.create(message_history.MessageHistoryTool);
     mht.* = .{};
     try list.append(allocator, mht.tool());
+
+    // Integration setup tools
+    const sst2 = try allocator.create(setup_slack.SetupSlackTool);
+    sst2.* = .{};
+    try list.append(allocator, sst2.tool());
+
+    const stt = try allocator.create(setup_twitter.SetupTwitterTool);
+    stt.* = .{};
+    try list.append(allocator, stt.tool());
+
+    const tdt = try allocator.create(test_delivery.TestDeliveryTool);
+    tdt.* = .{};
+    try list.append(allocator, tdt.tool());
+
+    const rst = try allocator.create(restart_service.RestartServiceTool);
+    rst.* = .{};
+    try list.append(allocator, rst.tool());
 
     // Delegate and schedule tools
     const dlt = try allocator.create(delegate.DelegateTool);
@@ -683,9 +704,10 @@ test "all tools includes extras when enabled" {
 
     // Order: shell, file_read, file_write, file_edit, git, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
-    //        message_history, delegate, schedule, spawn, http_request,
-    //        web_search, web_fetch, browser = 18
-    try std.testing.expectEqual(@as(usize, 18), tools.len);
+    //        message_history, setup_slack, setup_twitter, test_delivery,
+    //        restart_service, delegate, schedule, spawn, http_request,
+    //        web_search, web_fetch, browser = 22
+    try std.testing.expectEqual(@as(usize, 22), tools.len);
 }
 
 test "all tools excludes extras when disabled" {
@@ -694,8 +716,9 @@ test "all tools excludes extras when disabled" {
 
     // Order: shell, file_read, file_write, file_edit, git, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
-    //        message_history, delegate, schedule, spawn = 14
-    try std.testing.expectEqual(@as(usize, 14), tools.len);
+    //        message_history, setup_slack, setup_twitter, test_delivery,
+    //        restart_service, delegate, schedule, spawn = 18
+    try std.testing.expectEqual(@as(usize, 18), tools.len);
 }
 
 test "all tools wires http and web_search config into tool instances" {

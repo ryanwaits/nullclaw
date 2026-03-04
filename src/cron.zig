@@ -97,6 +97,9 @@ pub const CronJobPatch = struct {
     enabled: ?bool = null,
     model: ?[]const u8 = null,
     delete_after_run: ?bool = null,
+    delivery_mode: ?[]const u8 = null,
+    delivery_channel: ?[]const u8 = null,
+    delivery_to: ?[]const u8 = null,
 };
 
 /// A scheduled cron job.
@@ -608,6 +611,19 @@ pub const CronScheduler = struct {
         if (patch.delete_after_run) |d| {
             job.delete_after_run = d;
             job.one_shot = d;
+        }
+        if (patch.delivery_mode) |mode_str| {
+            job.delivery.mode = DeliveryMode.parse(mode_str);
+        }
+        if (patch.delivery_channel) |ch| {
+            const new_ch = allocator.dupe(u8, ch) catch return false;
+            if (job.delivery.channel) |old| allocator.free(old);
+            job.delivery.channel = new_ch;
+        }
+        if (patch.delivery_to) |to| {
+            const new_to = allocator.dupe(u8, to) catch return false;
+            if (job.delivery.to) |old| allocator.free(old);
+            job.delivery.to = new_to;
         }
         return true;
     }

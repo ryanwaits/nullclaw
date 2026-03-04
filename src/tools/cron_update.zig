@@ -12,7 +12,7 @@ pub const CronUpdateTool = struct {
     pub const tool_name = "cron_update";
     pub const tool_description = "Update a cron job: change expression, command, or enable/disable it.";
     pub const tool_params =
-        \\{"type":"object","properties":{"job_id":{"type":"string","description":"ID of the cron job to update"},"expression":{"type":"string","description":"New cron expression"},"command":{"type":"string","description":"New command to execute"},"enabled":{"type":"boolean","description":"Enable or disable the job"}},"required":["job_id"]}
+        \\{"type":"object","properties":{"job_id":{"type":"string","description":"ID of the cron job to update"},"expression":{"type":"string","description":"New cron expression"},"command":{"type":"string","description":"New command to execute"},"enabled":{"type":"boolean","description":"Enable or disable the job"},"delivery_mode":{"type":"string","description":"Delivery mode: none, always, on_error, on_success"},"delivery_channel":{"type":"string","description":"Delivery channel: email, slack"},"delivery_to":{"type":"string","description":"Delivery target: email address or Slack channel ID"}},"required":["job_id"]}
     ;
 
     const vtable = root.ToolVTable(@This());
@@ -31,10 +31,14 @@ pub const CronUpdateTool = struct {
         const expression = root.getString(args, "expression");
         const command = root.getString(args, "command");
         const enabled = root.getBool(args, "enabled");
+        const delivery_mode = root.getString(args, "delivery_mode");
+        const delivery_channel = root.getString(args, "delivery_channel");
+        const delivery_to = root.getString(args, "delivery_to");
 
         // Validate that at least one field is being updated
-        if (expression == null and command == null and enabled == null)
-            return ToolResult.fail("Nothing to update — provide expression, command, or enabled");
+        if (expression == null and command == null and enabled == null and
+            delivery_mode == null and delivery_channel == null and delivery_to == null)
+            return ToolResult.fail("Nothing to update — provide expression, command, enabled, or delivery params");
 
         // Validate expression if provided
         if (expression) |expr| {
@@ -51,6 +55,9 @@ pub const CronUpdateTool = struct {
             .expression = expression,
             .command = command,
             .enabled = enabled,
+            .delivery_mode = delivery_mode,
+            .delivery_channel = delivery_channel,
+            .delivery_to = delivery_to,
         };
 
         if (!scheduler.updateJob(allocator, job_id, patch)) {
@@ -68,6 +75,9 @@ pub const CronUpdateTool = struct {
         if (expression) |expr| try w.print(" | expression={s}", .{expr});
         if (command) |cmd| try w.print(" | command={s}", .{cmd});
         if (enabled) |ena| try w.print(" | enabled={s}", .{if (ena) "true" else "false"});
+        if (delivery_mode) |dm| try w.print(" | delivery_mode={s}", .{dm});
+        if (delivery_channel) |dc| try w.print(" | delivery_channel={s}", .{dc});
+        if (delivery_to) |dt| try w.print(" | delivery_to={s}", .{dt});
 
         return ToolResult{ .success = true, .output = try buf.toOwnedSlice(allocator) };
     }
@@ -106,6 +116,15 @@ test "cron_update_requires_something" {
     const result = try t.execute(std.testing.allocator, parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Nothing to update") != null);
+}
+
+test "cron_update_delivery_params_schema" {
+    var ct = CronUpdateTool{};
+    const t = ct.tool();
+    const schema = t.parametersJson();
+    try std.testing.expect(std.mem.indexOf(u8, schema, "delivery_mode") != null);
+    try std.testing.expect(std.mem.indexOf(u8, schema, "delivery_channel") != null);
+    try std.testing.expect(std.mem.indexOf(u8, schema, "delivery_to") != null);
 }
 
 test "cron_update_expression" {
