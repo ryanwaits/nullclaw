@@ -653,10 +653,24 @@ pub const MatrixLoopState = struct {
     }
 };
 
+pub const TwitterLoopState = struct {
+    last_activity: Atomic(i64),
+    stop_requested: Atomic(bool),
+    thread: ?std.Thread = null,
+
+    pub fn init() TwitterLoopState {
+        return .{
+            .last_activity = Atomic(i64).init(std.time.timestamp()),
+            .stop_requested = Atomic(bool).init(false),
+        };
+    }
+};
+
 pub const PollingState = union(enum) {
     telegram: *TelegramLoopState,
     signal: *SignalLoopState,
     matrix: *MatrixLoopState,
+    twitter: *TwitterLoopState,
 };
 
 pub const PollingSpawnResult = struct {
@@ -734,6 +748,83 @@ pub fn spawnMatrixPolling(
         .thread = thread,
         .state = .{ .matrix = mx_ls },
     };
+}
+
+pub fn spawnTwitterPolling(
+    allocator: std.mem.Allocator,
+    config: *const Config,
+    runtime: *ChannelRuntime,
+    channel: channels_mod.Channel,
+) !PollingSpawnResult {
+    const tw_ls = try allocator.create(TwitterLoopState);
+    errdefer allocator.destroy(tw_ls);
+    tw_ls.* = TwitterLoopState.init();
+
+    const tw_ptr: *channels_mod.twitter.TwitterChannel = @ptrCast(@alignCast(channel.ptr));
+    const thread = try std.Thread.spawn(
+        .{ .stack_size = 2 * 1024 * 1024 },
+        runTwitterLoop,
+        .{ allocator, config, runtime, tw_ls, tw_ptr },
+    );
+    tw_ls.thread = thread;
+
+    return .{
+        .thread = thread,
+        .state = .{ .twitter = tw_ls },
+    };
+}
+
+/// Thread-entry function for Twitter DM polling via X API v2.
+pub fn runTwitterLoop(
+    allocator: std.mem.Allocator,
+    config: *const Config,
+    runtime: *ChannelRuntime,
+    loop_state: *TwitterLoopState,
+    tw_ptr: *channels_mod.twitter.TwitterChannel,
+) void {
+    loop_state.last_activity.store(std.time.timestamp(), .release);
+
+    const poll_interval = tw_ptr.config.poll_interval_secs;
+
+    while (!loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
+        const messages = tw_ptr.fetchDmEvents(allocator) catch |err| {
+            log.warn("Twitter poll error: {}", .{err});
+            loop_state.last_activity.store(std.time.timestamp(), .release);
+            std.Thread.sleep(poll_interval * std.time.ns_per_s);
+            continue;
+        };
+
+        loop_state.last_activity.store(std.time.timestamp(), .release);
+
+        for (messages) |msg| {
+            // Dispatch through session manager → memory storage
+            const session_key_buf: [128]u8 = undefined;
+            _ = session_key_buf;
+            var key_buf: [128]u8 = undefined;
+            const session_key = std.fmt.bufPrint(&key_buf, "twitter:{s}", .{msg.sender}) catch msg.sender;
+
+            _ = runtime.session_mgr.processMessage(session_key, msg.content, null) catch |err| {
+                log.warn("Twitter DM processing error: {}", .{err});
+            };
+        }
+
+        if (messages.len > 0) {
+            for (messages) |msg| {
+                msg.deinit(allocator);
+            }
+            allocator.free(messages);
+        }
+
+        health.markComponentOk("twitter");
+
+        // Sleep for poll interval
+        var slept: u64 = 0;
+        while (slept < poll_interval and !loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
+            std.Thread.sleep(1 * std.time.ns_per_s);
+            slept += 1;
+        }
+    }
+    _ = config;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -23,6 +23,7 @@ pub const ChannelId = enum {
     maixcam,
     nostr,
     web,
+    twitter,
 };
 
 pub const ChannelMeta = struct {
@@ -62,6 +63,7 @@ pub const known_channels = [_]ChannelMeta{
     .{ .id = .maixcam, .key = "maixcam", .label = "MaixCam", .configured_message = "MaixCam configured", .listener_mode = .send_only },
     .{ .id = .nostr, .key = "nostr", .label = "Nostr", .configured_message = "Nostr configured", .listener_mode = .gateway_loop },
     .{ .id = .web, .key = "web", .label = "Web", .configured_message = "Web configured", .listener_mode = .gateway_loop },
+    .{ .id = .twitter, .key = "twitter", .label = "Twitter", .configured_message = "Twitter configured", .listener_mode = .polling },
 };
 
 pub fn isBuildEnabled(channel_id: ChannelId) bool {
@@ -86,6 +88,7 @@ pub fn isBuildEnabled(channel_id: ChannelId) bool {
         .maixcam => build_options.enable_channel_maixcam,
         .nostr => build_options.enable_channel_nostr,
         .web => build_options.enable_channel_web,
+        .twitter => build_options.enable_channel_twitter,
     };
 }
 
@@ -110,6 +113,7 @@ pub fn isBuildEnabledByKey(comptime key: []const u8) bool {
     if (comptime std.mem.eql(u8, key, "maixcam")) return build_options.enable_channel_maixcam;
     if (comptime std.mem.eql(u8, key, "nostr")) return build_options.enable_channel_nostr;
     if (comptime std.mem.eql(u8, key, "web")) return build_options.enable_channel_web;
+    if (comptime std.mem.eql(u8, key, "twitter")) return build_options.enable_channel_twitter;
     return true;
 }
 
@@ -135,6 +139,7 @@ pub fn configuredCount(cfg: *const Config, channel_id: ChannelId) usize {
         .maixcam => cfg.channels.maixcam.len,
         .nostr => if (cfg.channels.nostr != null) 1 else 0,
         .web => cfg.channels.web.len,
+        .twitter => cfg.channels.twitter.len,
     };
 }
 

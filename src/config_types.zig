@@ -580,6 +580,15 @@ pub const NostrConfig = struct {
     config_dir: []const u8 = ".",
 };
 
+pub const TwitterConfig = struct {
+    account_id: []const u8 = "default",
+    bearer_token: ?[]const u8 = null,
+    client_id: ?[]const u8 = null,
+    client_secret: ?[]const u8 = null,
+    poll_interval_secs: u64 = 60,
+    allow_from: []const []const u8 = &.{},
+};
+
 pub const ChannelsConfig = struct {
     cli: bool = true,
     telegram: []const TelegramConfig = &.{},
@@ -600,6 +609,7 @@ pub const ChannelsConfig = struct {
     onebot: []const OneBotConfig = &.{},
     maixcam: []const MaixCamConfig = &.{},
     web: []const WebConfig = &.{},
+    twitter: []const TwitterConfig = &.{},
     nostr: ?*NostrConfig = null,
 
     fn primaryAccount(comptime T: type, items: []const T) ?T {
@@ -667,6 +677,9 @@ pub const ChannelsConfig = struct {
     }
     pub fn webPrimary(self: *const ChannelsConfig) ?WebConfig {
         return primaryAccount(WebConfig, self.web);
+    }
+    pub fn twitterPrimary(self: *const ChannelsConfig) ?TwitterConfig {
+        return primaryAccount(TwitterConfig, self.twitter);
     }
 };
 

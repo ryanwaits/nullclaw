@@ -92,6 +92,7 @@ pub const ChannelManager = struct {
             .telegram => |ls| ls.last_activity.load(.acquire),
             .signal => |ls| ls.last_activity.load(.acquire),
             .matrix => |ls| ls.last_activity.load(.acquire),
+            .twitter => |ls| ls.last_activity.load(.acquire),
         };
     }
 
@@ -100,6 +101,7 @@ pub const ChannelManager = struct {
             .telegram => |ls| ls.stop_requested.store(true, .release),
             .signal => |ls| ls.stop_requested.store(true, .release),
             .matrix => |ls| ls.stop_requested.store(true, .release),
+            .twitter => |ls| ls.stop_requested.store(true, .release),
         }
     }
 
@@ -108,6 +110,7 @@ pub const ChannelManager = struct {
             .telegram => |ls| self.allocator.destroy(ls),
             .signal => |ls| self.allocator.destroy(ls),
             .matrix => |ls| self.allocator.destroy(ls),
+            .twitter => |ls| self.allocator.destroy(ls),
         }
     }
 

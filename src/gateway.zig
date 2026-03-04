@@ -1593,7 +1593,82 @@ const webhook_route_descriptors = [_]WebhookRouteDescriptor{
     .{ .path = "/line", .handler = handleLineWebhookRoute },
     .{ .path = "/lark", .handler = handleLarkWebhookRoute },
     .{ .path = "/qq", .handler = handleQqWebhookRoute },
+    .{ .path = "/oauth/twitter/callback", .handler = handleTwitterOAuthCallback },
 };
+
+// ── Twitter OAuth ──────────────────────────────────────────────────
+
+const auth_mod = @import("auth.zig");
+const http_util = @import("http_util.zig");
+
+var pending_twitter_pkce: ?PendingTwitterPkce = null;
+
+const PendingTwitterPkce = struct {
+    state: []const u8,
+    verifier: []const u8,
+    client_id: []const u8,
+};
+
+fn handleTwitterOAuthCallback(ctx: *WebhookHandlerContext) void {
+    const target = ctx.target;
+    const code = parseQueryParam(target, "code") orelse {
+        ctx.response_status = "400 Bad Request";
+        ctx.response_body = "{\"error\":\"missing code parameter\"}";
+        return;
+    };
+    const state = parseQueryParam(target, "state") orelse {
+        ctx.response_status = "400 Bad Request";
+        ctx.response_body = "{\"error\":\"missing state parameter\"}";
+        return;
+    };
+
+    const pending = pending_twitter_pkce orelse {
+        ctx.response_status = "400 Bad Request";
+        ctx.response_body = "{\"error\":\"no pending OAuth flow\"}";
+        return;
+    };
+
+    // Validate state matches
+    if (!std.mem.eql(u8, state, pending.state)) {
+        ctx.response_status = "400 Bad Request";
+        ctx.response_body = "{\"error\":\"state mismatch\"}";
+        return;
+    }
+
+    // Exchange code for token
+    const allocator = ctx.req_allocator;
+    const payload = std.fmt.allocPrint(allocator, "grant_type=authorization_code&code={s}&redirect_uri=http://127.0.0.1:3000/oauth/twitter/callback&client_id={s}&code_verifier={s}", .{ code, pending.client_id, pending.verifier }) catch {
+        ctx.response_status = "500 Internal Server Error";
+        ctx.response_body = "{\"error\":\"allocation failed\"}";
+        return;
+    };
+    defer allocator.free(payload);
+
+    const resp = http_util.curlPost(allocator, "https://api.twitter.com/2/oauth2/token", payload, &.{"Content-Type: application/x-www-form-urlencoded"}) catch {
+        ctx.response_status = "502 Bad Gateway";
+        ctx.response_body = "{\"error\":\"token exchange failed\"}";
+        return;
+    };
+    defer allocator.free(resp);
+
+    const token = auth_mod.parseTokenResponse(allocator, resp) catch {
+        ctx.response_status = "502 Bad Gateway";
+        ctx.response_body = "{\"error\":\"failed to parse token response\"}";
+        return;
+    };
+
+    auth_mod.saveCredential(allocator, "twitter", token) catch {
+        ctx.response_status = "500 Internal Server Error";
+        ctx.response_body = "{\"error\":\"failed to save credential\"}";
+        return;
+    };
+
+    // Clear pending state
+    pending_twitter_pkce = null;
+
+    ctx.response_status = "200 OK";
+    ctx.response_body = "<html><body><h1>Twitter authorized!</h1><p>You can close this window.</p></body></html>";
+}
 
 fn findWebhookRouteDescriptor(path: []const u8) ?*const WebhookRouteDescriptor {
     for (&webhook_route_descriptors) |*desc| {

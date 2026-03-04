@@ -609,7 +609,7 @@ pub fn pollDeviceCode(
     return error.DeviceCodeTimeout;
 }
 
-fn parseTokenResponse(allocator: std.mem.Allocator, body: []const u8) !OAuthToken {
+pub fn parseTokenResponse(allocator: std.mem.Allocator, body: []const u8) !OAuthToken {
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
     defer parsed.deinit();
 

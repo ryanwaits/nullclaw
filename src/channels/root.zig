@@ -163,6 +163,20 @@ else
             pub fn setBus(_: *@This(), _: anytype) void {}
         };
     };
+pub const twitter = if (@import("build_options").enable_channel_twitter)
+    @import("twitter.zig")
+else
+    struct {
+        pub const TwitterChannel = struct {
+            pub fn initFromConfig(_: @import("std").mem.Allocator, _: anytype) @This() {
+                return .{};
+            }
+            pub fn channel(_: *@This()) Channel {
+                unreachable;
+            }
+            pub fn deinit(_: *@This()) void {}
+        };
+    };
 pub const dispatch = @import("dispatch.zig");
 
 // ════════════════════════════════════════════════════════════════════════════

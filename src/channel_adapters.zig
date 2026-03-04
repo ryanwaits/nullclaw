@@ -49,6 +49,10 @@ pub const polling_descriptors = [_]PollingDescriptor{
         .channel_name = "matrix",
         .spawn = channel_loop.spawnMatrixPolling,
     },
+    .{
+        .channel_name = "twitter",
+        .spawn = channel_loop.spawnTwitterPolling,
+    },
 };
 
 pub fn findPollingDescriptor(channel_name: []const u8) ?*const PollingDescriptor {
