@@ -39,15 +39,21 @@ pub const RestartServiceTool = struct {
         child.stdout_behavior = .Pipe;
 
         try child.spawn();
-        const stdout = try child.stdout.?.reader().readAllAlloc(allocator, 4096);
-        defer allocator.free(stdout);
-        const stderr = try child.stderr.?.reader().readAllAlloc(allocator, 4096);
-        defer allocator.free(stderr);
-        const term = try child.wait();
+        const stderr = if (child.stderr) |f| f.readToEndAlloc(allocator, 4096) catch "" else "";
+        defer if (stderr.len > 0) allocator.free(stderr);
+        if (child.stdout) |f| {
+            const stdout = f.readToEndAlloc(allocator, 4096) catch "";
+            if (stdout.len > 0) allocator.free(stdout);
+        }
+        const term = child.wait() catch
+            return ToolResult.fail("Failed to wait for brew services");
 
-        if (term.Exited != 0) {
-            const msg = try std.fmt.allocPrint(allocator, "brew services restart failed (exit {d}): {s}", .{ term.Exited, stderr });
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        switch (term) {
+            .Exited => |code| if (code != 0) {
+                const msg = try std.fmt.allocPrint(allocator, "brew services restart failed (exit {d}): {s}", .{ code, stderr });
+                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            },
+            else => return ToolResult.fail("brew services restart terminated abnormally"),
         }
 
         return ToolResult.ok("Service daybrief restarted.");
