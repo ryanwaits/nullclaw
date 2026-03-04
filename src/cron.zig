@@ -1401,18 +1401,31 @@ pub fn cliAddJob(allocator: std.mem.Allocator, expression: []const u8, command: 
 }
 
 /// CLI: add a recurring agent job.
-pub fn cliAddAgentJob(allocator: std.mem.Allocator, expression: []const u8, prompt: []const u8, model: ?[]const u8) !void {
+pub fn cliAddAgentJob(allocator: std.mem.Allocator, expression: []const u8, prompt: []const u8, model: ?[]const u8, name: ?[]const u8, delivery: DeliveryConfig) !void {
     var scheduler = CronScheduler.init(allocator, 1024, true);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
     const job = try scheduler.addAgentJob(expression, prompt, model);
+    if (name) |n| job.name = try scheduler.allocator.dupe(u8, n);
+    if (delivery.mode != .none) {
+        job.delivery = .{
+            .mode = delivery.mode,
+            .channel = if (delivery.channel) |c| try scheduler.allocator.dupe(u8, c) else null,
+            .to = if (delivery.to) |t| try scheduler.allocator.dupe(u8, t) else null,
+            .best_effort = delivery.best_effort,
+        };
+    }
     try saveJobs(&scheduler);
 
     log.info("Added agent cron job {s}", .{job.id});
     log.info("  Expr : {s}", .{job.expression});
     log.info("  Type : {s}", .{job.job_type.asStr()});
+    if (job.name) |n| log.info("  Name : {s}", .{n});
     if (job.model) |m| log.info("  Model: {s}", .{m});
+    if (delivery.mode != .none) {
+        log.info("  Delivery: {s} via {s}", .{ delivery.mode.asStr(), delivery.channel orelse "default" });
+    }
 }
 
 /// CLI: add a one-shot delayed task.

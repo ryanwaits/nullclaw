@@ -11,6 +11,7 @@ const log = std.log.scoped(.imessage);
 const sqlite_mod = if (build_options.enable_sqlite) @import("../memory/engines/sqlite.zig") else @import("../memory/engines/sqlite_disabled.zig");
 const c = sqlite_mod.c;
 const SQLITE_STATIC = sqlite_mod.SQLITE_STATIC;
+const imessage_attributed = @import("imessage_attributed.zig");
 const CHAT_TARGET_PREFIX = "chat:";
 const POLL_BATCH_LIMIT: c_int = 20;
 
@@ -244,14 +245,15 @@ pub const IMessageChannel = struct {
         defer _ = c.sqlite3_close(db.?);
 
         const sql =
-            \\SELECT m.ROWID, h.id, m.text, c.guid
+            \\SELECT m.ROWID, h.id, m.text, c.guid, m.attributedBody
             \\FROM message m
             \\JOIN handle h ON m.handle_id = h.ROWID
             \\LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
             \\LEFT JOIN chat c ON c.ROWID = cmj.chat_id
             \\WHERE m.ROWID > ?1
             \\  AND m.is_from_me = 0
-            \\  AND m.text IS NOT NULL
+            \\  AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL)
+            \\  AND m.associated_message_type = 0
             \\ORDER BY m.ROWID ASC
             \\LIMIT ?2
         ;
@@ -280,11 +282,26 @@ pub const IMessageChannel = struct {
             if (sender_len == 0) continue;
             const sender = sender_ptr[0..sender_len];
 
-            const text_ptr = c.sqlite3_column_text(stmt, 2) orelse continue;
-            const text_len: usize = @intCast(c.sqlite3_column_bytes(stmt, 2));
-            if (text_len == 0) continue;
-            const text = text_ptr[0..text_len];
-            if (std.mem.trim(u8, text, " \t\r\n").len == 0) continue;
+            // Prefer m.text; fall back to decoding attributedBody BLOB.
+            const text = blk: {
+                if (c.sqlite3_column_text(stmt, 2)) |ptr| {
+                    const len: usize = @intCast(c.sqlite3_column_bytes(stmt, 2));
+                    if (len > 0) {
+                        const t = ptr[0..len];
+                        if (std.mem.trim(u8, t, " \t\r\n").len > 0) break :blk t;
+                    }
+                }
+                // Column 4: attributedBody BLOB
+                if (c.sqlite3_column_type(stmt, 4) != c.SQLITE_NULL) {
+                    const blob_ptr = c.sqlite3_column_blob(stmt, 4);
+                    const blob_len: usize = @intCast(c.sqlite3_column_bytes(stmt, 4));
+                    if (blob_ptr != null and blob_len > 0) {
+                        const blob: []const u8 = @as([*]const u8, @ptrCast(blob_ptr))[0..blob_len];
+                        if (imessage_attributed.decodeAttributedBody(blob)) |decoded| break :blk decoded;
+                    }
+                }
+                continue; // Neither text nor attributedBody produced content
+            };
 
             var chat_guid_opt: ?[]const u8 = null;
             if (c.sqlite3_column_type(stmt, 3) != c.SQLITE_NULL) {
@@ -588,7 +605,9 @@ fn createTestDb(allocator: std.mem.Allocator) ![]u8 {
         \\  ROWID INTEGER PRIMARY KEY,
         \\  handle_id INTEGER,
         \\  text TEXT,
-        \\  is_from_me INTEGER DEFAULT 0
+        \\  is_from_me INTEGER DEFAULT 0,
+        \\  attributedBody BLOB,
+        \\  associated_message_type INTEGER DEFAULT 0
         \\);
         \\CREATE TABLE IF NOT EXISTS chat (
         \\  ROWID INTEGER PRIMARY KEY,

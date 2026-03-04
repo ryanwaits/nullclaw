@@ -9,9 +9,9 @@ const CronScheduler = cron.CronScheduler;
 /// CronAdd tool — creates a new cron job with either a cron expression or a delay.
 pub const CronAddTool = struct {
     pub const tool_name = "cron_add";
-    pub const tool_description = "Create a scheduled cron job. Provide either 'expression' (cron syntax) or 'delay' (e.g. '30m', '2h') plus 'command'.";
+    pub const tool_description = "Create a scheduled cron job. Provide either 'expression' (cron syntax) or 'delay' (e.g. '30m', '2h'). Use 'command' for shell jobs or 'prompt' for agent jobs.";
     pub const tool_params =
-        \\{"type":"object","properties":{"expression":{"type":"string","description":"Cron expression (e.g. '*/5 * * * *')"},"delay":{"type":"string","description":"Delay for one-shot tasks (e.g. '30m', '2h')"},"command":{"type":"string","description":"Shell command to execute"},"name":{"type":"string","description":"Optional job name"}},"required":["command"]}
+        \\{"type":"object","properties":{"expression":{"type":"string","description":"Cron expression (e.g. '*/5 * * * *')"},"delay":{"type":"string","description":"Delay for one-shot tasks (e.g. '30m', '2h')"},"command":{"type":"string","description":"Shell command to execute (for shell jobs)"},"prompt":{"type":"string","description":"Agent prompt to execute (for agent jobs, mutually exclusive with command)"},"model":{"type":"string","description":"Model to use for agent jobs (e.g. 'claude-sonnet-4-20250514')"},"name":{"type":"string","description":"Optional job name"},"delivery_mode":{"type":"string","description":"When to deliver output: none, always, on_error, on_success"},"delivery_channel":{"type":"string","description":"Channel for delivery (e.g. 'email')"},"delivery_to":{"type":"string","description":"Recipient for delivery (e.g. email address)"}}}
     ;
 
     const vtable = root.ToolVTable(@This());
@@ -24,8 +24,14 @@ pub const CronAddTool = struct {
     }
 
     pub fn execute(_: *CronAddTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
-        const command = root.getString(args, "command") orelse
-            return ToolResult.fail("Missing required 'command' parameter");
+        const command = root.getString(args, "command");
+        const prompt = root.getString(args, "prompt");
+
+        // Must have either command (shell) or prompt (agent)
+        if (command == null and prompt == null)
+            return ToolResult.fail("Provide either 'command' (shell job) or 'prompt' (agent job)");
+        if (command != null and prompt != null)
+            return ToolResult.fail("Provide 'command' or 'prompt', not both");
 
         const expression = root.getString(args, "expression");
         const delay = root.getString(args, "delay");
@@ -50,35 +56,70 @@ pub const CronAddTool = struct {
         };
         defer scheduler.deinit();
 
+        // For agent jobs, use prompt as the command field (scheduler stores it there).
+        const job_command = command orelse prompt.?;
+
         // Prefer expression (recurring) over delay (one-shot)
         if (expression) |expr| {
-            const job = scheduler.addJob(expr, command) catch |err| {
+            const job = scheduler.addJob(expr, job_command) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to create job: {s}", .{@errorName(err)});
                 return ToolResult{ .success = false, .output = "", .error_msg = msg };
             };
 
+            // Apply agent-specific fields (dupe strings — scheduler owns them)
+            if (prompt) |p| {
+                job.job_type = .agent;
+                job.prompt = try allocator.dupe(u8, p);
+                if (root.getString(args, "model")) |m| {
+                    job.model = try allocator.dupe(u8, m);
+                }
+            }
+
+            // Apply delivery config (not duped — freeJobOwned doesn't free these,
+            // and saveJobs serializes before scheduler.deinit)
+            if (root.getString(args, "delivery_mode")) |dm| {
+                job.delivery.mode = cron.DeliveryMode.parse(dm);
+            }
+            job.delivery.channel = root.getString(args, "delivery_channel");
+            job.delivery.to = root.getString(args, "delivery_to");
+
             cron.saveJobs(&scheduler) catch {};
 
-            const msg = try std.fmt.allocPrint(allocator, "Created cron job {s}: {s} \u{2192} {s}", .{
+            const job_type_str = if (prompt != null) "agent" else "shell";
+            const msg = try std.fmt.allocPrint(allocator, "Created {s} cron job {s}: {s}", .{
+                job_type_str,
                 job.id,
                 job.expression,
-                job.command,
             });
             return ToolResult{ .success = true, .output = msg };
         }
 
         if (delay) |d| {
-            const job = scheduler.addOnce(d, command) catch |err| {
+            const job = scheduler.addOnce(d, job_command) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to create one-shot task: {s}", .{@errorName(err)});
                 return ToolResult{ .success = false, .output = "", .error_msg = msg };
             };
 
+            if (prompt) |p| {
+                job.job_type = .agent;
+                job.prompt = try allocator.dupe(u8, p);
+                if (root.getString(args, "model")) |m| {
+                    job.model = try allocator.dupe(u8, m);
+                }
+            }
+
+            if (root.getString(args, "delivery_mode")) |dm| {
+                job.delivery.mode = cron.DeliveryMode.parse(dm);
+            }
+            job.delivery.channel = root.getString(args, "delivery_channel");
+            job.delivery.to = root.getString(args, "delivery_to");
+
             cron.saveJobs(&scheduler) catch {};
 
-            const msg = try std.fmt.allocPrint(allocator, "Created cron job {s}: {s} \u{2192} {s}", .{
+            const job_type_str = if (prompt != null) "agent" else "shell";
+            const msg = try std.fmt.allocPrint(allocator, "Created {s} one-shot job {s}", .{
+                job_type_str,
                 job.id,
-                job.expression,
-                job.command,
             });
             return ToolResult{ .success = true, .output = msg };
         }
@@ -97,14 +138,15 @@ pub fn loadScheduler(allocator: std.mem.Allocator) !CronScheduler {
 
 // ── Tests ───────────────────────────────────────────────────────────
 
-test "cron_add_requires_command" {
+test "cron_add_requires_command_or_prompt" {
     var cat = CronAddTool{};
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"expression\": \"*/5 * * * *\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
     try std.testing.expect(!result.success);
-    try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "command") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "command") != null or
+        std.mem.indexOf(u8, result.error_msg.?, "prompt") != null);
 }
 
 test "cron_add_requires_schedule" {
@@ -126,7 +168,7 @@ test "cron_add_with_expression" {
     const result = try t.execute(std.testing.allocator, parsed.value.object);
     defer if (result.output.len > 0) std.testing.allocator.free(result.output);
     if (result.success) {
-        try std.testing.expect(std.mem.indexOf(u8, result.output, "Created cron job") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.output, "Created shell cron job") != null);
     }
 }
 
@@ -138,7 +180,7 @@ test "cron_add_with_delay" {
     const result = try t.execute(std.testing.allocator, parsed.value.object);
     defer if (result.output.len > 0) std.testing.allocator.free(result.output);
     if (result.success) {
-        try std.testing.expect(std.mem.indexOf(u8, result.output, "Created cron job") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.output, "Created shell one-shot job") != null);
     }
 }
 
@@ -165,4 +207,32 @@ test "cron_add schema has command" {
     try std.testing.expect(std.mem.indexOf(u8, schema, "command") != null);
     try std.testing.expect(std.mem.indexOf(u8, schema, "expression") != null);
     try std.testing.expect(std.mem.indexOf(u8, schema, "delay") != null);
+    try std.testing.expect(std.mem.indexOf(u8, schema, "prompt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, schema, "delivery_mode") != null);
+}
+
+test "cron_add_rejects_command_and_prompt" {
+    var cat = CronAddTool{};
+    const t = cat.tool();
+    const parsed = try root.parseTestArgs(
+        \\{"expression": "*/5 * * * *", "command": "echo hi", "prompt": "do stuff"}
+    );
+    defer parsed.deinit();
+    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    try std.testing.expect(!result.success);
+    try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not both") != null);
+}
+
+test "cron_add_agent_with_prompt" {
+    var cat = CronAddTool{};
+    const t = cat.tool();
+    const parsed = try root.parseTestArgs(
+        \\{"expression": "0 8 * * *", "prompt": "summarize messages", "model": "claude-sonnet-4-20250514", "delivery_mode": "always", "delivery_channel": "email", "delivery_to": "ben@example.com"}
+    );
+    defer parsed.deinit();
+    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    if (result.success) {
+        try std.testing.expect(std.mem.indexOf(u8, result.output, "agent") != null);
+    }
 }

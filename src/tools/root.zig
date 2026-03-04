@@ -86,6 +86,7 @@ pub const i2c = @import("i2c.zig");
 pub const spi = @import("spi.zig");
 pub const path_security = @import("path_security.zig");
 pub const process_util = @import("process_util.zig");
+pub const message_history = @import("message_history.zig");
 
 // ── Core types ──────────────────────────────────────────────────────
 
@@ -344,6 +345,11 @@ pub fn allTools(
     const mft = try allocator.create(memory_forget.MemoryForgetTool);
     mft.* = .{};
     try list.append(allocator, mft.tool());
+
+    // Message history tool (iMessage digest)
+    const mht = try allocator.create(message_history.MessageHistoryTool);
+    mht.* = .{};
+    try list.append(allocator, mht.tool());
 
     // Delegate and schedule tools
     const dlt = try allocator.create(delegate.DelegateTool);
@@ -677,9 +683,9 @@ test "all tools includes extras when enabled" {
 
     // Order: shell, file_read, file_write, file_edit, git, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
-    //        delegate, schedule, spawn, http_request, web_search, web_fetch,
-    //        browser = 17
-    try std.testing.expectEqual(@as(usize, 17), tools.len);
+    //        message_history, delegate, schedule, spawn, http_request,
+    //        web_search, web_fetch, browser = 18
+    try std.testing.expectEqual(@as(usize, 18), tools.len);
 }
 
 test "all tools excludes extras when disabled" {
@@ -688,8 +694,8 @@ test "all tools excludes extras when disabled" {
 
     // Order: shell, file_read, file_write, file_edit, git, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
-    //        delegate, schedule, spawn = 13
-    try std.testing.expectEqual(@as(usize, 13), tools.len);
+    //        message_history, delegate, schedule, spawn = 14
+    try std.testing.expectEqual(@as(usize, 14), tools.len);
 }
 
 test "all tools wires http and web_search config into tool instances" {

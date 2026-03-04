@@ -230,8 +230,13 @@ fn runCron(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
             \\Commands:
             \\  list                          List all scheduled tasks
             \\  add <expression> <command>    Add a recurring cron job
-            \\  add-agent <expression> <prompt> [--model <model>]
+            \\  add-agent <expression> <prompt> [options]
             \\                                Add a recurring agent cron job
+            \\    --model <model>             AI model to use
+            \\    --name <name>               Human-readable job name
+            \\    --delivery-mode <mode>      Delivery mode (always|on_error|on_success)
+            \\    --delivery-channel <ch>     Channel for delivery (e.g. email)
+            \\    --delivery-to <addr>        Delivery destination (e.g. email address)
             \\  once <delay> <command>        Add a one-shot delayed task
             \\  once-agent <delay> <prompt> [--model <model>]
             \\                                Add a one-shot delayed agent task
@@ -258,18 +263,39 @@ fn runCron(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
         try yc.cron.cliAddJob(allocator, sub_args[1], sub_args[2]);
     } else if (std.mem.eql(u8, subcmd, "add-agent")) {
         if (sub_args.len < 3) {
-            std.debug.print("Usage: nullclaw cron add-agent <expression> <prompt> [--model <model>]\n", .{});
+            std.debug.print("Usage: nullclaw cron add-agent <expression> <prompt> [--model <model>] [--name <name>] [--delivery-mode <mode>] [--delivery-channel <ch>] [--delivery-to <addr>]\n", .{});
             std.process.exit(1);
         }
         var model: ?[]const u8 = null;
+        var name: ?[]const u8 = null;
+        var delivery_mode: ?[]const u8 = null;
+        var delivery_channel: ?[]const u8 = null;
+        var delivery_to: ?[]const u8 = null;
         var i: usize = 3;
         while (i < sub_args.len) : (i += 1) {
             if (i + 1 < sub_args.len and std.mem.eql(u8, sub_args[i], "--model")) {
                 model = sub_args[i + 1];
                 i += 1;
+            } else if (i + 1 < sub_args.len and std.mem.eql(u8, sub_args[i], "--name")) {
+                name = sub_args[i + 1];
+                i += 1;
+            } else if (i + 1 < sub_args.len and std.mem.eql(u8, sub_args[i], "--delivery-mode")) {
+                delivery_mode = sub_args[i + 1];
+                i += 1;
+            } else if (i + 1 < sub_args.len and std.mem.eql(u8, sub_args[i], "--delivery-channel")) {
+                delivery_channel = sub_args[i + 1];
+                i += 1;
+            } else if (i + 1 < sub_args.len and std.mem.eql(u8, sub_args[i], "--delivery-to")) {
+                delivery_to = sub_args[i + 1];
+                i += 1;
             }
         }
-        try yc.cron.cliAddAgentJob(allocator, sub_args[1], sub_args[2], model);
+        const delivery = yc.cron.DeliveryConfig{
+            .mode = if (delivery_mode) |dm| yc.cron.DeliveryMode.parse(dm) else .none,
+            .channel = delivery_channel,
+            .to = delivery_to,
+        };
+        try yc.cron.cliAddAgentJob(allocator, sub_args[1], sub_args[2], model, name, delivery);
     } else if (std.mem.eql(u8, subcmd, "once")) {
         if (sub_args.len < 3) {
             std.debug.print("Usage: nullclaw cron once <delay> <command>\n", .{});
